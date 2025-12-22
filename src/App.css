@@ -1,31 +1,144 @@
-/* src/App.css */
+/* 定义 Win11 风格变量 */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  background-color: #1a1b1e; /* 深色背景，护眼 */
-  color: #e0e0e0;
-  overflow: hidden; /* 禁止滚动条，像原生应用 */
+  /* 浅色模式 (Light Mode) */
+  --bg-color: #f3f3f3;       /* Win11 应用背景通常不是纯白，是淡淡的灰 */
+  --surface-color: #ffffff;  /* 卡片/列表项背景 */
+  --text-primary: #1a1a1a;
+  --text-secondary: #5d5d5d;
+  --border-color: #e5e5e5;
+  --hover-bg: #e0e0e0;       /* 鼠标悬停时的浅灰 */
+  --active-bg: #d0d0d0;      /* 点击时的深灰 */
+  --accent-color: #0067c0;   /* Win11 默认蓝 */
+  
+  --radius-md: 6px;          /* Win11 标准圆角 */
+  --font-family: "Segoe UI Variable", "Segoe UI", sans-serif; /* Win11 专属字体 */
+}
+
+/* 深色模式 (Dark Mode) - 自动跟随系统 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #202020;     /* 深色背景 */
+    --surface-color: #2c2c2c;
+    --text-primary: #ffffff;
+    --text-secondary: #a0a0a0;
+    --border-color: #383838;
+    --hover-bg: #383838;
+    --active-bg: #454545;
+    --accent-color: #4cc2ff; /* 深色模式下的亮蓝 */
+  }
 }
 
 body {
   margin: 0;
-  display: flex;
-  justify-content: center;
-  padding-top: 50px;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  user-select: none; /* 禁止选中文本，像原生 App */
+  transition: background-color 0.3s, color 0.3s;
 }
 
 .container {
-  width: 90%;
-  max-width: 600px;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  height: 100vh; /* 占满窗口 */
+  padding: 0;
 }
 
-input {
-  width: 100%;
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px solid #333;
-  background-color: #25262b;
-  color: white;
-  font-size: 1.2rem;
-  outline: none;
+/* 顶部栏 */
+.header {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color); /* 细细的分隔线 */
+  background-color: var(--bg-color);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.status-badge {
+  font-size: 10px;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: var(--text-secondary);
+}
+
+/* 列表容器 */
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* 滚动条美化 (Webkit) */
+.history-list::-webkit-scrollbar {
+  width: 4px;
+}
+.history-list::-webkit-scrollbar-thumb {
+  background-color: var(--border-color);
+  border-radius: 4px;
+}
+
+/* 单个历史记录项 - Win11 列表风格 */
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-md);
+  
+  background-color: transparent; /* 默认透明 */
+  transition: all 0.1s ease-out;
+  cursor: default;
+}
+
+/* 悬停效果：Win11 经典的圆角矩形高亮 */
+.history-item:hover {
+  background-color: var(--hover-bg);
+}
+
+/* 点击效果：稍微缩放 */
+.history-item:active {
+  background-color: var(--active-bg);
+  transform: scale(0.99);
+}
+
+.item-content {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  /* 文本溢出显示省略号 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.item-meta {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-left: 12px;
+  opacity: 0.7;
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
