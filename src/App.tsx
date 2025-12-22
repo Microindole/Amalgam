@@ -46,27 +46,36 @@ function App() {
     <div className="container">
       <div className="header"><span className="app-title">Amalgam Trace</span></div>
       <div className="history-list">
-        {history.map((item) => (
-          <div key={item.id} className={`history-item ${item.type}`} onClick={() => handleCopy(item)}>
-            <div className="item-content">
-              {item.type === "text" && <span>{item.content}</span>}
-              {item.type === "image" && <img src={item.content} alt="preview" className="preview-img" />}
-              {item.type === "file-link" && (
-                <div className="file-tombstone">
-                  <span className="file-icon">📄</span>
-                  <div className="file-info">
-                    <span className="file-name">{item.content.split(/[\\/]/).pop()}</span>
-                    <span className="file-path">{item.content}</span>
+        {history.map((item) => {
+          // 处理多文件路径显示
+          const paths = item.content.split('\n');
+          const isMulti = paths.length > 1;
+          const displayName = isMulti 
+            ? `${paths[0].split(/[\\/]/).pop()} 等 ${paths.length} 个文件`
+            : paths[0].split(/[\\/]/).pop();
+
+          return (
+            <div key={item.id} className={`history-item ${item.type}`} onClick={() => handleCopy(item)}>
+              <div className="item-content">
+                {item.type === "text" && <span>{item.content}</span>}
+                {item.type === "image" && <img src={item.content} alt="preview" className="preview-img" />}
+                {item.type === "file-link" && (
+                  <div className="file-tombstone">
+                    <span className="file-icon">{isMulti ? "📚" : "📄"}</span>
+                    <div className="file-info">
+                      <span className="file-name">{displayName}</span>
+                      <span className="file-path">{paths[0]}{isMulti && " ..."}</span>
+                    </div>
+                    <button className="locate-badge" onClick={(e) => { e.stopPropagation(); handleLocate(item.content); }}>
+                      定位
+                    </button>
                   </div>
-                  <button className="locate-badge" onClick={(e) => { e.stopPropagation(); handleLocate(item.content); }}>
-                    定位
-                  </button>
-                </div>
-              )}
+                )}
+              </div>
+              <span className="item-meta">{item.type}</span>
             </div>
-            <span className="item-meta">{item.type}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

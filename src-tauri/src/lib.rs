@@ -13,29 +13,37 @@ use tauri::{
     Emitter, Manager,
 };
 
-// --- 辅助函数：通过 PowerShell 获取剪贴板文件路径 ---
-fn get_clipboard_file_path() -> Option<String> {
+// --- 辅助函数：通过 PowerShell 获取剪贴板所有文件路径 (解决乱码与多选) ---
+fn get_clipboard_file_paths() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        // 探测剪贴板中是否有 FileDropList (文件列表格式)
+        // 核心修复：强制 PowerShell 以 UTF8 编码输出
+        let ps_script = "
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+            $files = Get-Clipboard -Format FileDropList;
+            if ($files) { $files.FullName }
+        ";
+        
         let output = Command::new("powershell")
             .arg("-NoProfile")
             .arg("-Command")
-            .arg("if (Get-Clipboard -Format FileDropList) { (Get-Clipboard -Format FileDropList).FullName | Select-Object -First 1 }")
+            .arg(ps_script)
             .output()
             .ok()?;
         
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(path);
+            // 使用 UTF-8 转换并过滤空行
+            let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !result.is_empty() {
+                // 返回所有文件路径，以换行符分隔
+                return Some(result);
             }
         }
     }
     None
 }
 
-// --- 辅助函数：图片转换 (保持不变) ---
+// --- 辅助函数：图片转换 ---
 fn image_to_base64(img: ImageData) -> Option<String> {
     let img_buffer = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
         img.width as u32,
@@ -60,7 +68,7 @@ fn base64_to_image(b64: &str) -> Result<ImageData<'static>, String> {
     })
 }
 
-// --- 监听线程 (修复: 增加文件探测) ---
+// --- 监听线程 ---
 fn start_clipboard_listener(app_handle: tauri::AppHandle) {
     thread::spawn(move || {
         let mut last_content = String::new();
@@ -74,7 +82,6 @@ fn start_clipboard_listener(app_handle: tauri::AppHandle) {
                 if let Ok(text) = clip.get_text() {
                     if !text.is_empty() && text != last_content {
                         let path_obj = Path::new(&text);
-                        // 判断是否是普通文本还是手动复制的路径字符串
                         let (msg_type, content) = if path_obj.is_absolute() && path_obj.exists() {
                             ("file-link", text.clone())
                         } else {
@@ -86,19 +93,19 @@ fn start_clipboard_listener(app_handle: tauri::AppHandle) {
                     }
                 } 
                 
-                // 2. 如果没发现新文本，尝试探测“文件复制”行为
+                // 2. 探测文件复制 (CF_HDROP 格式)
                 if !detected_new {
-                    if let Some(file_path) = get_clipboard_file_path() {
-                        if file_path != last_content {
-                            println!("Rust: 捕获到系统文件复制行为 -> {}", file_path);
-                            last_content = file_path.clone();
-                            let _ = app_handle.emit("clipboard-update", ("file-link", file_path));
+                    if let Some(file_paths) = get_clipboard_file_paths() {
+                        if file_paths != last_content {
+                            println!("Rust: 捕获到多文件复制行为");
+                            last_content = file_paths.clone();
+                            let _ = app_handle.emit("clipboard-update", ("file-link", file_paths));
                             detected_new = true;
                         }
                     }
                 }
 
-                // 3. 探测图片 (修复: 只有在没发现文件/文本时才检查图片，减少开销)
+                // 3. 探测图片
                 if !detected_new {
                     if let Ok(img) = clip.get_image() {
                         if img.bytes.len() != last_img_len {
@@ -110,21 +117,23 @@ fn start_clipboard_listener(app_handle: tauri::AppHandle) {
                     }
                 }
             }
-            // 扫描频率建议 500ms，体验更灵动
             thread::sleep(Duration::from_millis(500));
         }
     });
 }
 
-// --- 命令：写入剪贴板 (修复: 真正的底层文件复制) ---
+// --- 命令：写入剪贴板 (修复多选回写) ---
 #[tauri::command]
 fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
-    println!("Rust: 执行写入 -> 类型: {}", kind);
-
     if kind == "file-link" {
-        // 使用更稳健的 PowerShell 命令将路径转为文件对象
-        let escaped_path = content.replace("'", "''");
-        let ps_cmd = format!("Set-Clipboard -Path '{}'", escaped_path);
+        // 将换行符分隔的路径转为 PowerShell 数组格式
+        let paths: Vec<String> = content.lines().map(|l| format!("'{}'", l.replace("'", "''"))).collect();
+        let paths_arr = paths.join(",");
+        
+        let ps_cmd = format!(
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Path {}", 
+            paths_arr
+        );
         
         let output = Command::new("powershell")
             .arg("-NoProfile")
@@ -134,7 +143,7 @@ fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
 
         if !output.status.success() {
-            return Err("系统文件复制失败".into());
+            return Err("回写文件失败".into());
         }
         return Ok(());
     }
@@ -149,10 +158,11 @@ fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
     Ok(())
 }
 
-// --- 命令：定位文件 ---
 #[tauri::command]
 fn open_in_explorer(path: String) -> Result<(), String> {
-    Command::new("explorer").arg("/select,").arg(path).spawn().map_err(|e| e.to_string())?;
+    // 如果是多个文件，打开第一个文件所在的文件夹并定位
+    let first_path = path.lines().next().unwrap_or(&path);
+    Command::new("explorer").arg("/select,").arg(first_path).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
