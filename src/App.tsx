@@ -3,23 +3,36 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
-function App() {
-  const [history, setHistory] = useState<string[]>([]);
+// 定义数据结构
+interface ClipboardItem {
+  id: string; // 用时间戳做ID
+  type: "text" | "image";
+  content: string; // 文本内容 或 Base64图片
+}
 
-  // 处理新内容的逻辑（抽离出来复用）
-  const addHistoryItem = (newText: string) => {
+function App() {
+  const [history, setHistory] = useState<ClipboardItem[]>([]);
+
+  const addHistoryItem = (type: "text" | "image", content: string) => {
     setHistory((prev) => {
-      // 1. 先把数组里已有的这个内容删掉 (去重)
-      const filtered = prev.filter((item) => item !== newText);
-      // 2. 把新的加到最前面
-      return [newText, ...filtered];
+      // 简单去重 (如果是图片，对比 Base64 字符串会有点慢，MVP先这样)
+      const filtered = prev.filter((item) => item.content !== content);
+      return [{ 
+        id: Date.now().toString(), 
+        type, 
+        content 
+      }, ...filtered];
     });
   };
 
   useEffect(() => {
-    // 监听 Rust 的剪贴板更新
-    const unlistenPromise = listen<string>("clipboard-update", (event) => {
-      addHistoryItem(event.payload);
+    // 注意：Rust 发送的 payload 现在是一个元组 ["text", "内容"]
+    const unlistenPromise = listen<[string, string]>("clipboard-update", (event) => {
+      const [type, content] = event.payload;
+      // 类型断言安全转换
+      if (type === "text" || type === "image") {
+        addHistoryItem(type, content);
+      }
     });
 
     return () => {
@@ -27,41 +40,53 @@ function App() {
     };
   }, []);
 
-  async function handleCopy(text: string) {
+  async function handleCopy(item: ClipboardItem) {
     try {
-      await invoke("write_to_clipboard", { content: text });
-      // 点击后，手动把这一项“顶”到最前面，给用户即时反馈
-      addHistoryItem(text);
+      // 临时给个用户反馈（比如把鼠标变漏斗，或者 toast）
+      document.body.style.cursor = "wait"; 
+      
+      console.log("TS: Requesting copy for", item.type);
+      await invoke("write_to_clipboard", { kind: item.type, content: item.content });
+      
+      // 成功后把这一项置顶
+      addHistoryItem(item.type, item.content);
+      console.log("TS: Copy success");
     } catch (error) {
+      // ⚠️ 这里现在会把 Rust 的具体错误打印出来
       console.error("Failed to copy:", error);
+      alert("复制失败: " + error); // 简单弹窗告知错误
+    } finally {
+      document.body.style.cursor = "default";
     }
   }
 
   return (
     <div className="container">
-      {/* 顶部搜索栏/状态栏 (伪装成 Win11 标题栏风格) */}
       <div className="header">
         <span className="app-title">Trace</span>
-        <span className="status-badge">Running</span>
+        {/* 设置按钮占位符 */}
+        <span className="settings-btn">⚙️</span>
       </div>
 
       <div className="history-list">
         {history.length === 0 ? (
-          <div className="empty-state">
-            <p>Clipboard history is empty</p>
-          </div>
+          <div className="empty-state"><p>Empty</p></div>
         ) : (
-          history.map((item, index) => (
+          history.map((item) => (
             <div 
-              key={item} // 既然去重了，用 content 做 key 会更稳定
+              key={item.id} 
               className="history-item"
               onClick={() => handleCopy(item)}
             >
               <div className="item-content">
-                {item.length > 100 ? item.substring(0, 100) + "..." : item}
+                {item.type === "text" ? (
+                  <span>{item.content}</span>
+                ) : (
+                  // 显示图片预览
+                  <img src={item.content} alt="Clipboard" className="preview-img" />
+                )}
               </div>
-              {/* 只是装饰用的时间戳/类型图标位，以后可以加 */}
-              <span className="item-meta">Text</span>
+              <span className="item-meta">{item.type}</span>
             </div>
           ))
         )}
