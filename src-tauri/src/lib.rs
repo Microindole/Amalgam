@@ -1,15 +1,16 @@
+use arboard::{Clipboard, ImageData};
+use base64::{engine::general_purpose, Engine as _};
+use image::ImageFormat;
+use std::borrow::Cow;
+use std::io::Cursor;
+use std::thread;
+use std::time::Duration;
+use std::path::Path;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
-use std::thread;
-use std::time::Duration;
-use arboard::{Clipboard, ImageData};
-use std::io::Cursor;
-use base64::{engine::general_purpose, Engine as _};
-use image::ImageFormat;
-use std::borrow::Cow;
 
 // --- 辅助函数：把 Arboard 的图片转换成 Base64 字符串 ---
 fn image_to_base64(img: ImageData) -> Option<String> {
@@ -34,8 +35,11 @@ fn image_to_base64(img: ImageData) -> Option<String> {
 // --- 辅助函数：把 Base64 字符串转回 Arboard 图片 ---
 fn base64_to_image(b64: &str) -> Result<ImageData<'static>, String> {
     // 1. 尝试去掉头部 "data:image/png;base64,"
-    let clean_b64 = b64.split(',').nth(1).ok_or("错误: 图片数据缺少头部(data:...)")?;
-    
+    let clean_b64 = b64
+        .split(',')
+        .nth(1)
+        .ok_or("错误: 图片数据缺少头部(data:...)")?;
+
     // 2. 尝试 Base64 解码
     let bytes = general_purpose::STANDARD
         .decode(clean_b64)
@@ -46,7 +50,7 @@ fn base64_to_image(b64: &str) -> Result<ImageData<'static>, String> {
     let img = image::load_from_memory(&bytes)
         .map_err(|e| format!("错误: 图片加载失败(可能是格式不支持) -> {}", e))?
         .to_rgba8();
-        
+
     let (width, height) = img.dimensions();
     println!("Rust Debug: 图片解析成功! 大小: {}x{}", width, height);
 
@@ -60,28 +64,36 @@ fn base64_to_image(b64: &str) -> Result<ImageData<'static>, String> {
 // --- 监听线程 ---
 fn start_clipboard_listener(app_handle: tauri::AppHandle) {
     thread::spawn(move || {
-        // 用两个变量分别存“上一次的文本”和“上一次的图片指纹(简化用长度代替)”
         let mut last_text = String::new();
-        let mut last_img_len = 0; 
+        let mut last_img_len = 0; // 这个变量现在会被用到了
 
         loop {
             if let Ok(mut clip) = Clipboard::new() {
-                // A. 检查文本
+                // A. 文本/文件路径 探测
                 if let Ok(text) = clip.get_text() {
                     if !text.is_empty() && text != last_text {
-                        println!("Rust: 捕获文本 -> {}", text);
-                        last_text = text.clone();
-                        // 发送事件：类型是 "text"
-                        let _ = app_handle.emit("clipboard-update", ("text", text));
+                        // --- 🌟 墓碑机制的核心逻辑 ---
+                        let path_obj = Path::new(&text);
+
+                        // 判断：是绝对路径 且 文件/文件夹真实存在？
+                        let (msg_type, content) = if path_obj.is_absolute() && path_obj.exists() {
+                            println!("Rust: 发现文件墓碑 -> {}", text);
+                            ("file-link", text) // 标记为文件链接
+                        } else {
+                            println!("Rust: 发现普通文本 -> {}", text);
+                            ("text", text) // 标记为普通文本
+                        };
+
+                        last_text = content.clone();
+                        let _ = app_handle.emit("clipboard-update", (msg_type, content));
                     }
                 }
 
-                // B. 检查图片
+                // B. 图片探测 (修复：把逻辑加回来了！)
                 if let Ok(img) = clip.get_image() {
                     // 简单的去重逻辑：如果图片字节长度变了，就认为是新图片
-                    // (生产环境可以用 Hash 算法，这里为了性能简化)
                     if img.bytes.len() != last_img_len {
-                        println!("Rust: 捕获图片");
+                        println!("Rust: 捕获图片, 大小: {}", img.bytes.len());
                         last_img_len = img.bytes.len();
                         
                         // 转 Base64 发给前端
@@ -92,6 +104,7 @@ fn start_clipboard_listener(app_handle: tauri::AppHandle) {
                     }
                 }
             }
+            // 休息 1 秒
             thread::sleep(Duration::from_millis(1000));
         }
     });
@@ -101,7 +114,7 @@ fn start_clipboard_listener(app_handle: tauri::AppHandle) {
 #[tauri::command]
 fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
     println!("Rust: 收到写入请求 -> 类型: {}", kind);
-    
+
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
 
     if kind == "text" {
@@ -109,11 +122,13 @@ fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
     } else if kind == "image" {
         // 调用上面的函数，如果有错误直接抛出
         let img_data = base64_to_image(content)?;
-        
+
         println!("Rust: 正在把图片写入系统剪贴板...");
-        clipboard.set_image(img_data).map_err(|e| format!("错误: 系统剪贴板拒绝写入图片 -> {}", e))?;
+        clipboard
+            .set_image(img_data)
+            .map_err(|e| format!("错误: 系统剪贴板拒绝写入图片 -> {}", e))?;
     }
-    
+
     println!("Rust: 写入完成!");
     Ok(())
 }

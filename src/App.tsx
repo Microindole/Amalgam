@@ -5,17 +5,18 @@ import "./App.css";
 
 // 定义数据结构
 interface ClipboardItem {
-  id: string; // 用时间戳做ID
-  type: "text" | "image";
-  content: string; // 文本内容 或 Base64图片
+  id: string;
+  type: "text" | "image" | "file-link"; // ✅ 确保这里有 file-link
+  content: string;
 }
 
 function App() {
   const [history, setHistory] = useState<ClipboardItem[]>([]);
 
-  const addHistoryItem = (type: "text" | "image", content: string) => {
+  // 1. 修改这里：参数类型必须包含 "file-link"
+  const addHistoryItem = (type: "text" | "image" | "file-link", content: string) => {
     setHistory((prev) => {
-      // 简单去重 (如果是图片，对比 Base64 字符串会有点慢，MVP先这样)
+      // 简单去重
       const filtered = prev.filter((item) => item.content !== content);
       return [{ 
         id: Date.now().toString(), 
@@ -26,12 +27,14 @@ function App() {
   };
 
   useEffect(() => {
-    // 注意：Rust 发送的 payload 现在是一个元组 ["text", "内容"]
+    // 监听 Rust 事件
     const unlistenPromise = listen<[string, string]>("clipboard-update", (event) => {
       const [type, content] = event.payload;
-      // 类型断言安全转换
-      if (type === "text" || type === "image") {
-        addHistoryItem(type, content);
+      
+      // 2. 修改这里：放行 "file-link" 类型
+      // 使用 includes 检查，并用 as any 绕过简单的类型推断限制
+      if (["text", "image", "file-link"].includes(type)) {
+        addHistoryItem(type as any, content);
       }
     });
 
@@ -42,19 +45,15 @@ function App() {
 
   async function handleCopy(item: ClipboardItem) {
     try {
-      // 临时给个用户反馈（比如把鼠标变漏斗，或者 toast）
-      document.body.style.cursor = "wait"; 
+      document.body.style.cursor = "wait";
+      // 如果是 file-link，告诉 Rust 把它当 text (路径字符串) 写入
+      const writeType = item.type === "file-link" ? "text" : item.type;
       
-      console.log("TS: Requesting copy for", item.type);
-      await invoke("write_to_clipboard", { kind: item.type, content: item.content });
-      
-      // 成功后把这一项置顶
+      await invoke("write_to_clipboard", { kind: writeType, content: item.content });
       addHistoryItem(item.type, item.content);
-      console.log("TS: Copy success");
     } catch (error) {
-      // ⚠️ 这里现在会把 Rust 的具体错误打印出来
       console.error("Failed to copy:", error);
-      alert("复制失败: " + error); // 简单弹窗告知错误
+      alert("复制失败: " + error);
     } finally {
       document.body.style.cursor = "default";
     }
@@ -64,7 +63,6 @@ function App() {
     <div className="container">
       <div className="header">
         <span className="app-title">Trace</span>
-        {/* 设置按钮占位符 */}
         <span className="settings-btn">⚙️</span>
       </div>
 
@@ -81,9 +79,20 @@ function App() {
               <div className="item-content">
                 {item.type === "text" ? (
                   <span>{item.content}</span>
-                ) : (
-                  // 显示图片预览
+                ) : item.type === "image" ? (
                   <img src={item.content} alt="Clipboard" className="preview-img" />
+                ) : (
+                  /* 3. 确保这里有 file-link 的渲染逻辑 */
+                  <div className="file-tombstone">
+                    <span className="file-icon">📁</span>
+                    <div className="file-info">
+                      <span className="file-name">
+                        {item.content.split(/[\\/]/).pop()} 
+                      </span>
+                      <span className="file-path">{item.content}</span>
+                    </div>
+                    <span className="link-badge">LINK</span>
+                  </div>
                 )}
               </div>
               <span className="item-meta">{item.type}</span>
