@@ -11,11 +11,12 @@ interface ClipboardItem {
 
 function App() {
   const [history, setHistory] = useState<ClipboardItem[]>([]);
+  // 新增：记录哪些多文件项目被展开了
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const unlistenPromise = listen<[string, string]>("clipboard-update", (event) => {
       const [type, content] = event.payload;
-      // 捕获到新内容时去重并添加
       setHistory((prev) => {
         const filtered = prev.filter((item) => item.content !== content);
         return [{ id: Date.now().toString(), type: type as any, content }, ...filtered];
@@ -24,11 +25,24 @@ function App() {
     return () => { unlistenPromise.then((f) => f()); };
   }, []);
 
+  // 切换展开/收起状态
+  const toggleExpand = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 防止触发底层的复制逻辑
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
   async function handleCopy(item: ClipboardItem) {
     try {
-      // 关键：这里直接透传 item.type，如果是 file-link，Rust 会执行 PS 命令进行文件复制
       await invoke("write_to_clipboard", { kind: item.type, content: item.content });
-      console.log("已成功复制:", item.type);
+      console.log("已复制:", item.type);
     } catch (error) {
       alert("复制失败: " + error);
     }
@@ -47,9 +61,10 @@ function App() {
       <div className="header"><span className="app-title">Amalgam Trace</span></div>
       <div className="history-list">
         {history.map((item) => {
-          // 处理多文件路径显示
           const paths = item.content.split('\n');
           const isMulti = paths.length > 1;
+          const isExpanded = expandedIds.has(item.id);
+          
           const displayName = isMulti 
             ? `${paths[0].split(/[\\/]/).pop()} 等 ${paths.length} 个文件`
             : paths[0].split(/[\\/]/).pop();
@@ -60,15 +75,41 @@ function App() {
                 {item.type === "text" && <span>{item.content}</span>}
                 {item.type === "image" && <img src={item.content} alt="preview" className="preview-img" />}
                 {item.type === "file-link" && (
-                  <div className="file-tombstone">
-                    <span className="file-icon">{isMulti ? "📚" : "📄"}</span>
-                    <div className="file-info">
-                      <span className="file-name">{displayName}</span>
-                      <span className="file-path">{paths[0]}{isMulti && " ..."}</span>
+                  <div className="file-container">
+                    {/* 主显示区域 */}
+                    <div className="file-tombstone">
+                      <span 
+                        className="file-icon" 
+                        onClick={(e) => isMulti && toggleExpand(item.id, e)}
+                        style={{ cursor: isMulti ? 'pointer' : 'default' }}
+                      >
+                        {isMulti ? (isExpanded ? "📖" : "📚") : "📄"}
+                      </span>
+                      <div className="file-info">
+                        <span className="file-name">{displayName}</span>
+                        <span className="file-path">{paths[0]}{isMulti && " ..."}</span>
+                      </div>
+                      <button className="locate-badge" onClick={(e) => { e.stopPropagation(); handleLocate(item.content); }}>
+                        定位全部
+                      </button>
                     </div>
-                    <button className="locate-badge" onClick={(e) => { e.stopPropagation(); handleLocate(item.content); }}>
-                      定位
-                    </button>
+
+                    {/* 展开的详细列表 */}
+                    {isMulti && isExpanded && (
+                      <div className="file-sub-list">
+                        {paths.map((p, idx) => (
+                          <div key={idx} className="file-sub-item">
+                            <span className="sub-path">{p}</span>
+                            <button 
+                              className="sub-locate-btn" 
+                              onClick={(e) => { e.stopPropagation(); handleLocate(p); }}
+                            >
+                              定位
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

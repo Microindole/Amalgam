@@ -205,3 +205,37 @@ body {
   border-radius: 4px;
   opacity: 0.8;
 }
+
+.file-sub-list {
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid #0078d4;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+.file-sub-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 0.85em;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.sub-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 10px;
+  color: #555;
+}
+
+.sub-locate-btn {
+  padding: 2px 6px;
+  font-size: 0.8em;
+  cursor: pointer;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
