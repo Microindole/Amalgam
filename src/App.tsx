@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { SettingsPanel, AppSettings } from "./Settings"; // 导入新组件和接口
 import "./App.css";
 
 interface ClipboardItem {
@@ -11,10 +12,18 @@ interface ClipboardItem {
 
 function App() {
   const [history, setHistory] = useState<ClipboardItem[]>([]);
-  // 新增：记录哪些多文件项目被展开了
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  
+  // --- 新增：设置相关的状态 ---
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
+    // 1. 初始化时加载并应用主题设置
+    invoke<AppSettings>("get_settings").then((settings) => {
+      applyTheme(settings.theme);
+    });
+
+    // 2. 监听剪贴板更新事件
     const unlistenPromise = listen<[string, string]>("clipboard-update", (event) => {
       const [type, content] = event.payload;
       setHistory((prev) => {
@@ -22,19 +31,23 @@ function App() {
         return [{ id: Date.now().toString(), type: type as any, content }, ...filtered];
       });
     });
-    return () => { unlistenPromise.then((f) => f()); };
+
+    return () => {
+      unlistenPromise.then((f) => f());
+    };
   }, []);
 
-  // 切换展开/收起状态
+  // 应用主题逻辑
+  const applyTheme = (theme: string) => {
+    document.documentElement.setAttribute("data-theme", theme);
+  };
+
   const toggleExpand = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // 防止触发底层的复制逻辑
+    e.stopPropagation();
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -58,7 +71,15 @@ function App() {
 
   return (
     <div className="container">
-      <div className="header"><span className="app-title">Amalgam Trace</span></div>
+      {/* 修改：Header 添加设置图标按钮 */}
+      <div className="header">
+        <span className="app-title">Amalgam Trace</span>
+        <button className="settings-btn" onClick={() => setShowSettings(true)}>
+          ⚙️
+        </button>
+      </div>
+      <SettingsPanel visible={showSettings} onClose={() => setShowSettings(false)} />
+
       <div className="history-list">
         {history.map((item) => {
           const paths = item.content.split('\n');
@@ -76,7 +97,6 @@ function App() {
                 {item.type === "image" && <img src={item.content} alt="preview" className="preview-img" />}
                 {item.type === "file-link" && (
                   <div className="file-container">
-                    {/* 主显示区域 */}
                     <div className="file-tombstone">
                       <span 
                         className="file-icon" 
@@ -94,7 +114,6 @@ function App() {
                       </button>
                     </div>
 
-                    {/* 展开的详细列表 */}
                     {isMulti && isExpanded && (
                       <div className="file-sub-list">
                         {paths.map((p, idx) => (
@@ -118,6 +137,12 @@ function App() {
           );
         })}
       </div>
+
+      {/* --- 新增：设置面板组件 --- */}
+      <SettingsPanel 
+        visible={showSettings} 
+        onClose={() => setShowSettings(false)} 
+      />
     </div>
   );
 }

@@ -33,7 +33,10 @@
 # 1. 安装前端依赖
 npm install
 
-# 2. 启动开发模式 (Hot Reload)
+# 2. 生成对应图标
+npm run tauri icon ./logo.svg
+
+# 3. 启动开发模式 (Hot Reload)
 # 第一次运行需要编译 Rust 依赖，耗时较长，请耐心等待
 npm run tauri dev
 

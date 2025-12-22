@@ -13,6 +13,10 @@ use tauri::{
     Emitter, Manager,
 };
 
+mod settings; // 引入新模块
+
+use settings::{AppSettings, SettingsState, get_settings, save_settings, init_settings};
+
 // --- 辅助函数：通过 PowerShell 获取剪贴板所有文件路径 (解决乱码与多选) ---
 fn get_clipboard_file_paths() -> Option<String> {
     #[cfg(target_os = "windows")]
@@ -185,15 +189,30 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            let initial_settings = init_settings(app.handle());
+            app.manage(SettingsState(std::sync::Mutex::new(initial_settings)));
+
             let handle = app.handle().clone();
             start_clipboard_listener(handle);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![write_to_clipboard, open_in_explorer])
+        .invoke_handler(tauri::generate_handler![
+            write_to_clipboard, 
+            open_in_explorer,
+            get_settings,
+            save_settings
+        ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.hide().unwrap();
-                api.prevent_close();
+                // 根据设置决定是隐藏还是真正关闭
+                let state = window.state::<SettingsState>();
+                let settings = state.0.lock().unwrap();
+                
+                if settings.close_to_tray {
+                    window.hide().unwrap();
+                    api.prevent_close();
+                }
+                // 如果 close_to_tray 为 false，则不调用 prevent_close，应用正常退出
             }
         })
         .run(tauri::generate_context!())

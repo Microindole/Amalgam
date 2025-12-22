@@ -49,3 +49,10 @@ target/
 .idea
 src-tauri/icons/icon.icns
 src-tauri/icons/icon.ico
+
+
+# 忽略自动生成的图标文件，避免污染仓库
+src-tauri/icons/*.png
+src-tauri/icons/*.ico
+src-tauri/icons/*.icns
+src-tauri/icons/*

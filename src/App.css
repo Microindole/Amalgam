@@ -1,33 +1,45 @@
 /* 定义 Win11 风格变量 */
-:root {
-  /* 浅色模式 (Light Mode) */
-  --bg-color: #f3f3f3;       /* Win11 应用背景通常不是纯白，是淡淡的灰 */
-  --surface-color: #ffffff;  /* 卡片/列表项背景 */
+/* 定义基础变量 (默认亮色) */
+:root, [data-theme="light"] {
+  --bg-color: #f3f3f3;
+  --surface-color: #ffffff;
   --text-primary: #1a1a1a;
   --text-secondary: #5d5d5d;
   --border-color: #e5e5e5;
-  --hover-bg: #e0e0e0;       /* 鼠标悬停时的浅灰 */
-  --active-bg: #d0d0d0;      /* 点击时的深灰 */
-  --accent-color: #0067c0;   /* Win11 默认蓝 */
+  --hover-bg: #e0e0e0;
+  --active-bg: #d0d0d0;
+  --accent-color: #0067c0;
   
-  --radius-md: 6px;          /* Win11 标准圆角 */
-  --font-family: "Segoe UI Variable", "Segoe UI", sans-serif; /* Win11 专属字体 */
+  --radius-md: 6px;
+  --font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
 }
 
-/* 深色模式 (Dark Mode) - 自动跟随系统 */
+/* 定义深色模式变量 */
+[data-theme="dark"] {
+  --bg-color: #202020;
+  --surface-color: #2c2c2c;
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --border-color: #383838;
+  --hover-bg: #383838;
+  --active-bg: #454545;
+  --accent-color: #4cc2ff;
+}
+
+/* 处理“跟随系统”选项 */
+/* 当没有显式设置亮/暗模式（即 system）且系统本身是深色时，应用深色变量 */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg-color: #202020;     /* 深色背景 */
+  :root:not([data-theme="light"]) {
+    --bg-color: #202020;
     --surface-color: #2c2c2c;
     --text-primary: #ffffff;
     --text-secondary: #a0a0a0;
     --border-color: #383838;
     --hover-bg: #383838;
     --active-bg: #454545;
-    --accent-color: #4cc2ff; /* 深色模式下的亮蓝 */
+    --accent-color: #4cc2ff;
   }
 }
-
 body {
   margin: 0;
   padding: 0;
