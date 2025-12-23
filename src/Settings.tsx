@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { applyTheme } from "./App";
 
 // 🌟 重新导出接口，供 App.tsx 使用
 export interface AppSettings {
@@ -24,23 +24,12 @@ export function SettingsPanel({ visible, onClose }: { visible: boolean; onClose:
     const next = { ...settings, [key]: value };
     setSettings(next);
 
+    // 保存到后端
     await invoke("save_settings", { settings: next });
 
+    // 如果修改的是主题，调用统一应用逻辑
     if (key === "theme") {
-      // 应用到网页
-      document.documentElement.setAttribute("data-theme", value);
-
-      // 同步到原生标题栏
-      const appWindow = getCurrentWindow();
-      if (value === "dark") {
-        await appWindow.setTheme("dark");
-      } else if (value === "light") {
-        await appWindow.setTheme("light");
-      } else {
-        // system 模式，检测系统主题
-        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        await appWindow.setTheme(isDark ? "dark" : "light");
-      }
+      await applyTheme(value);
     }
   };
 

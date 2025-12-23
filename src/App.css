@@ -1,4 +1,5 @@
 /* Win11 简约风格 */
+/* 1. 基础变量 (默认浅色) */
 :root {
   --bg: #f3f3f3;
   --surface: #ffffff;
@@ -9,6 +10,20 @@
   --hover: #f5f5f5;
 }
 
+/* 2. 跟随系统：当系统为深色，且用户未手动强制指定为 light 时 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #202020;
+    --surface: #2b2b2b;
+    --border: #3b3b3b;
+    --text: #ffffff;
+    --text-secondary: #8a8886;
+    --accent: #60cdff;
+    --hover: #333333;
+  }
+}
+
+/* 3. 手动强制深色 */
 [data-theme="dark"] {
   --bg: #202020;
   --surface: #2b2b2b;
@@ -17,6 +32,13 @@
   --text-secondary: #8a8886;
   --accent: #60cdff;
   --hover: #333333;
+}
+
+/* 确保标题栏和 Header 背景使用变量 */
+.titlebar, .header {
+  background: var(--surface);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
 }
 
 * {
@@ -38,17 +60,6 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-}
-
-/* === Header === */
-.header {
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
 }
 
 .tab-group {
@@ -401,8 +412,6 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-app-region: drag; /* 允许拖动窗口 */
 }

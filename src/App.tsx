@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { SettingsPanel, AppSettings } from "./Settings";
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import "./App.css";
 
 interface ClipboardItem {
@@ -15,6 +16,29 @@ interface FileResult {
     path: string;
     is_dir: boolean;
 }
+
+
+const appWindow = getCurrentWindow();
+
+export const applyTheme = async (theme: "light" | "dark" | "system") => {
+    // 1. 设置网页内容的 CSS 变量主题
+    document.documentElement.setAttribute("data-theme", theme);
+
+    // 2. 强制修改原生标题栏主题 (即便系统是浅色)
+    try {
+        if (theme === "dark") {
+            await appWindow.setTheme("dark");
+        } else if (theme === "light") {
+            await appWindow.setTheme("light");
+        } else {
+            // system 模式下，根据当前系统实际色彩来同步原生标题栏
+            const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            await appWindow.setTheme(isDark ? "dark" : "light");
+        }
+    } catch (e) {
+        console.error("无法设置原生主题:", e);
+    }
+};
 
 function App() {
     const [history, setHistory] = useState<ClipboardItem[]>([]);
@@ -35,10 +59,22 @@ function App() {
     const searchVersionRef = useRef<number>(0);
 
     useEffect(() => {
-        invoke<AppSettings>("get_settings").then(s =>
-            document.documentElement.setAttribute("data-theme", s.theme)
-        );
+        // 1. 初始化设置与主题
+        invoke<AppSettings>("get_settings").then(s => {
+            applyTheme(s.theme as any);
+        });
 
+        // 2. 监听系统主题实时变化（用于 system 模式）
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        const handleSystemThemeChange = async () => {
+            const s = await invoke<AppSettings>("get_settings");
+            if (s.theme === "system") {
+                applyTheme("system");
+            }
+        };
+        mediaQuery.addEventListener('change', handleSystemThemeChange);
+
+        // 3. 获取磁盘列表
         invoke<string[]>("get_available_drives").then(drives => {
             setDrives(drives);
             if (drives.length > 0) {
@@ -46,6 +82,7 @@ function App() {
             }
         });
 
+        // 4. 监听剪贴板更新
         const unlisten = listen<[string, string]>("clipboard-update", (event) => {
             const [type, content] = event.payload;
             setHistory(prev => {
@@ -57,7 +94,14 @@ function App() {
             });
         });
 
-        return () => { unlisten.then(f => f()); };
+        // --- 合并后的清理函数 ---
+        return () => {
+            // 移除系统主题监听器
+            mediaQuery.removeEventListener('change', handleSystemThemeChange);
+
+            // 执行 Tauri 的取消监听函数
+            unlisten.then(f => f());
+        };
     }, []);
 
     const executeSearch = (query: string, drive: string, reg: boolean, mc: boolean) => {
