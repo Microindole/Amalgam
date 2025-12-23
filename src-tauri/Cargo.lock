@@ -56,8 +56,10 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "crossbeam-channel",
  "dirs",
  "image",
+ "parking_lot",
  "rayon",
  "regex",
  "serde",

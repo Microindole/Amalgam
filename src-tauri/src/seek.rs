@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use walkdir::WalkDir;
 use rayon::prelude::*;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FileResult {
@@ -11,6 +13,26 @@ pub struct FileResult {
     pub path: String,
     pub is_dir: bool,
 }
+
+// 需要跳过的目录（性能优化）
+const SKIP_DIRS: &[&str] = &[
+    "$RECYCLE.BIN",
+    "System Volume Information",
+    "WindowsApps",
+    "$Windows.~BT",
+    "Windows",
+    "ProgramData",
+    "node_modules",
+    ".git",
+    ".idea",
+    ".vscode",
+    "__pycache__",
+    "target",
+    "build",
+    "dist",
+    ".cache",
+    "cache",
+];
 
 #[tauri::command]
 pub async fn search_files(
@@ -29,25 +51,16 @@ pub async fn search_files(
         #[cfg(not(target_os = "windows"))]
         { PathBuf::from("/") }
     } else {
-        PathBuf::from(search_path)
+        PathBuf::from(&search_path)
     };
 
-    // 动态构建搜索路径：直接搜索根目录或其常见子目录
-    let priority_paths = if root.to_string_lossy().ends_with(":\\") || root.to_string_lossy() == "/" {
-        // 如果是盘符根目录，尝试常见目录，但允许它们不存在
-        vec![
-            root.join("Program Files"),
-            root.join("Program Files (x86)"),
-            root.join("Users"),
-            root.join("ProgramData"),
-            root.clone(), // 添加根目录本身
-        ]
-    } else {
-        // 如果是普通目录，直接搜索该目录
-        vec![root.clone()]
-    };
+    if !root.exists() {
+        return Err(format!("路径不存在: {}", search_path));
+    }
 
     let query_trimmed = query.trim();
+
+    // 编译正则表达式
     let regex_matcher = if is_regex {
         Some(
             RegexBuilder::new(query_trimmed)
@@ -66,81 +79,237 @@ pub async fn search_files(
         query_trimmed.to_string()
     };
 
-    let all_results = Mutex::new(Vec::new());
-    let max_results = 100;
+    let max_results = 300;
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let should_stop = Arc::new(AtomicBool::new(false));
 
-    // 并行搜索多个目录
-    priority_paths
-        .par_iter()
-        .filter(|p| p.exists()) // 只搜索存在的目录
-        .for_each(|path| {
-            if all_results.lock().unwrap().len() >= max_results {
-                return;
-            }
+    // 判断搜索策略
+    let is_root_drive = root.to_string_lossy().ends_with(":\\") || root.to_string_lossy() == "/";
 
-            let mut local_results = Vec::new();
+    if is_root_drive {
+        // 根目录：并行搜索多个一级子目录
+        search_root_parallel(
+            root,
+            query_normalized,
+            regex_matcher,
+            match_case,
+            results.clone(),
+            should_stop.clone(),
+            max_results,
+        )?;
+    } else {
+        // 普通目录：分层并行搜索
+        search_directory_layered(
+            root,
+            query_normalized,
+            regex_matcher,
+            match_case,
+            results.clone(),
+            should_stop.clone(),
+            max_results,
+        )?;
+    }
 
-            // 根据是否为根目录调整搜索深度
-            let is_root = path.to_string_lossy().ends_with(":\\") || path.to_string_lossy() == "/";
-            let max_depth = if is_root { 3 } else { 6 };
+    let final_results = results.lock().clone();
 
-            for entry in WalkDir::new(path)
-                .max_depth(max_depth)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|e| {
-                    let name = e.file_name().to_string_lossy();
-                    !name.starts_with('$')
-                        && !name.starts_with('.')
-                        && name != "System Volume Information"
-                        && name != "$RECYCLE.BIN"
-                        && name != "WindowsApps"
-                })
-                .filter_map(|e| e.ok())
-            {
-                let name = entry.file_name().to_string_lossy();
-                let is_match = if let Some(re) = &regex_matcher {
-                    re.is_match(&name)
-                } else {
-                    if match_case {
-                        name.contains(query_trimmed)
-                    } else {
-                        name.to_lowercase().contains(&query_normalized)
-                    }
-                };
+    let mut final_results = final_results;
 
-                if is_match {
-                    local_results.push(FileResult {
-                        name: name.to_string(),
-                        path: entry.path().to_string_lossy().to_string(),
-                        is_dir: entry.path().is_dir(),
-                    });
-                }
-
-                // 每个目录最多30个结果
-                if local_results.len() >= 30 {
-                    break;
-                }
-            }
-
-            // 将本地结果合并到全局
-            let mut global = all_results.lock().unwrap();
-            if global.len() < max_results {
-                let remaining = max_results - global.len();
-                global.extend(local_results.into_iter().take(remaining));
-            }
-        });
-
-    let mut final_results = all_results.into_inner().unwrap();
-
-    // 排序：文件夹优先，然后按名称长度
+    // 排序：目录优先，然后按路径深度，最后按名称长度
     final_results.sort_by(|a, b| {
         b.is_dir
             .cmp(&a.is_dir)
+            .then_with(|| {
+                let depth_a = a.path.matches(std::path::MAIN_SEPARATOR).count();
+                let depth_b = b.path.matches(std::path::MAIN_SEPARATOR).count();
+                depth_a.cmp(&depth_b)
+            })
             .then_with(|| a.name.len().cmp(&b.name.len()))
     });
 
     Ok(final_results)
+}
+
+// 根目录并行搜索策略 - 只搜索常见用户目录
+fn search_root_parallel(
+    root: PathBuf,
+    query: String,
+    regex: Option<regex::Regex>,
+    match_case: bool,
+    results: Arc<Mutex<Vec<FileResult>>>,
+    should_stop: Arc<AtomicBool>,
+    max_results: usize,
+) -> Result<(), String> {
+    // 只搜索常见的用户目录，跳过系统目录
+    let subdirs: Vec<PathBuf> = std::fs::read_dir(&root)
+        .map_err(|e| format!("无法读取目录: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return false;
+            }
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+
+            // 跳过系统目录和隐藏目录
+            !name.starts_with('$')
+                && !name.starts_with('.')
+                && !SKIP_DIRS.contains(&name.as_ref())
+                && name != "Windows"
+                && name != "Program Files"
+                && name != "Program Files (x86)"
+        })
+        .map(|entry| entry.path())
+        .collect();
+
+    // 并行搜索，但限制深度
+    subdirs.par_iter().for_each(|subdir| {
+        if should_stop.load(Ordering::Relaxed) {
+            return;
+        }
+
+        search_single_tree(
+            subdir,
+            &query,
+            &regex,
+            match_case,
+            &results,
+            &should_stop,
+            max_results,
+            6, // 根目录的子目录只搜索6层
+        );
+    });
+
+    Ok(())
+}
+
+// 普通目录分层并行搜索
+fn search_directory_layered(
+    root: PathBuf,
+    query: String,
+    regex: Option<regex::Regex>,
+    match_case: bool,
+    results: Arc<Mutex<Vec<FileResult>>>,
+    should_stop: Arc<AtomicBool>,
+    max_results: usize,
+) -> Result<(), String> {
+    // 先快速扫描前几层
+    search_single_tree(
+        &root,
+        &query,
+        &regex,
+        match_case,
+        &results,
+        &should_stop,
+        max_results,
+        4, // 先快速扫描4层
+    );
+
+    // 如果没找到足够的结果，再深入搜索
+    if results.lock().len() < max_results / 2 && !should_stop.load(Ordering::Relaxed) {
+        // 获取第2-3层的所有目录
+        let deeper_dirs: Vec<PathBuf> = WalkDir::new(&root)
+            .min_depth(2)
+            .max_depth(3)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| should_visit_entry(e))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.path().to_path_buf())
+            .collect();
+
+        // 并行深入搜索这些目录
+        deeper_dirs.par_iter().for_each(|dir| {
+            if should_stop.load(Ordering::Relaxed) {
+                return;
+            }
+            search_single_tree(
+                dir,
+                &query,
+                &regex,
+                match_case,
+                &results,
+                &should_stop,
+                max_results,
+                8, // 深入搜索8层
+            );
+        });
+    }
+
+    Ok(())
+}
+
+// 搜索单个目录树
+fn search_single_tree(
+    root: &PathBuf,
+    query: &str,
+    regex: &Option<regex::Regex>,
+    match_case: bool,
+    results: &Arc<Mutex<Vec<FileResult>>>,
+    should_stop: &Arc<AtomicBool>,
+    max_results: usize,
+    max_depth: usize,
+) {
+    let walker = WalkDir::new(root)
+        .max_depth(max_depth)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| should_visit_entry(e));
+
+    for entry in walker {
+        if should_stop.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let name = entry.file_name().to_string_lossy();
+
+        // 匹配逻辑
+        let is_match = if let Some(re) = regex {
+            re.is_match(&name)
+        } else {
+            if match_case {
+                name.contains(query)
+            } else {
+                name.to_lowercase().contains(query)
+            }
+        };
+
+        if is_match {
+            let mut res = results.lock();
+            if res.len() < max_results {
+                res.push(FileResult {
+                    name: name.to_string(),
+                    path: entry.path().to_string_lossy().to_string(),
+                    is_dir: entry.path().is_dir(),
+                });
+            } else {
+                should_stop.store(true, Ordering::Relaxed);
+                break;
+            }
+        }
+    }
+}
+
+// 判断是否应该访问该目录项
+fn should_visit_entry(entry: &walkdir::DirEntry) -> bool {
+    let name = entry.file_name().to_string_lossy();
+
+    // 跳过隐藏文件和系统目录
+    if name.starts_with('.') || name.starts_with('$') {
+        return false;
+    }
+
+    // 跳过已知的大型无用目录
+    if SKIP_DIRS.contains(&name.as_ref()) {
+        return false;
+    }
+
+    true
 }
 
 #[tauri::command]
