@@ -58,6 +58,8 @@ dependencies = [
  "base64 0.22.1",
  "dirs",
  "image",
+ "rayon",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

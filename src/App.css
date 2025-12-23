@@ -1,103 +1,468 @@
-/* --- WinUI 3 设计系统变量 --- */
+/* Win11 简约风格 */
 :root {
-  /* 基础色调 - 浅色 */
-  --win-bg: #f3f3f3;
-  --win-surface: #ffffff;
-  --win-surface-alt: rgba(255, 255, 255, 0.7);
-  --win-text-main: #1a1a1a;
-  --win-text-sub: #5d5d5d;
-  --win-border: rgba(0, 0, 0, 0.08);
-  --win-accent: #0067c0;
-  --win-hover: rgba(0, 0, 0, 0.03);
-  --win-active: rgba(0, 0, 0, 0.06);
-  --mica-blur: blur(20px) saturate(180%);
+  --bg: #f3f3f3;
+  --surface: #ffffff;
+  --border: #e5e5e5;
+  --text: #000000;
+  --text-secondary: #605e5c;
+  --accent: #0067c0;
+  --hover: #f5f5f5;
 }
 
 [data-theme="dark"] {
-  /* 基础色调 - 深色 */
-  --win-bg: #202020;
-  --win-surface: #2c2c2c;
-  --win-surface-alt: rgba(44, 44, 44, 0.7);
-  --win-text-main: #ffffff;
-  --win-text-sub: #a0a0a0;
-  --win-border: rgba(255, 255, 255, 0.08);
-  --win-accent: #4cc2ff;
-  --win-hover: rgba(255, 255, 255, 0.05);
-  --win-active: rgba(255, 255, 255, 0.08);
+  --bg: #202020;
+  --surface: #2b2b2b;
+  --border: #3b3b3b;
+  --text: #ffffff;
+  --text-secondary: #8a8886;
+  --accent: #60cdff;
+  --hover: #333333;
 }
 
-/* --- 基础布局 --- */
-body {
+* {
   margin: 0;
-  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
-  background-color: var(--win-bg);
-  color: var(--win-text-main);
-  user-select: none;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
   overflow: hidden;
 }
 
-.container { height: 100vh; display: flex; flex-direction: column; }
-
-/* --- 复用组件: Mica 效果容器 --- */
-.mica-container {
-  background: var(--win-surface-alt);
-  backdrop-filter: var(--mica-blur);
-  border: 1px solid var(--win-border);
+/* === 容器 === */
+.container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
 }
 
-/* --- 复用组件: WinUI 卡片 (用于历史项, 搜索项, 设置项) --- */
-.win-card {
-  background: var(--win-surface);
-  border: 1px solid var(--win-border);
+/* === Header === */
+.header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-group {
+  display: flex;
+  gap: 4px;
+}
+
+.tab-btn {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.tab-btn:hover {
+  background: var(--hover);
+}
+
+.tab-btn.active {
+  background: var(--hover);
+  font-weight: 600;
+}
+
+.settings-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.settings-btn:hover {
+  background: var(--hover);
+}
+
+/* === 内容区 === */
+.content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* === 卡片 === */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 12px;
-  transition: all 0.1s ease;
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.card:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
+.card:active {
+  transform: scale(0.98);
+}
+
+/* === 文本内容 === */
+.text-content {
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* === 图片预览 === */
+.image-preview {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+/* === 文件内容 === */
+.file-content {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.win-card:hover { background: var(--win-hover); }
-.win-card:active { transform: scale(0.99); background: var(--win-active); }
 
-/* --- 复用组件: 输入框 & 选择框 --- */
-.win-input, .win-select {
-  background: var(--win-surface);
-  border: 1px solid var(--win-border);
-  border-bottom: 2px solid transparent;
-  padding: 6px 12px;
-  border-radius: 4px;
-  color: var(--win-text-main);
-  outline: none;
+.icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
   font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.win-input:focus { border-bottom-color: var(--win-accent); }
 
-/* --- 复用组件: 徽章/小按钮 --- */
-.win-badge {
-  background: var(--win-accent);
-  color: white;
-  border: none;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
+.file-path {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
   cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.1s;
+  flex-shrink: 0;
 }
 
-/* --- Tab 切换器样式 --- */
-.tab-switcher {
+.action-btn:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
+/* === 子文件 === */
+.sub-files {
+  margin-top: 8px;
+  padding-left: 32px;
   display: flex;
-  background: var(--win-hover);
-  padding: 4px;
-  border-radius: 8px;
+  flex-direction: column;
   gap: 4px;
 }
-.tab-item {
-  padding: 4px 16px;
-  border-radius: 6px;
-  font-size: 13px;
+
+.sub-file {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
   cursor: pointer;
+  transition: all 0.1s;
 }
-.tab-item.active {
-  background: var(--win-surface);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+
+.sub-file:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* === Seek 容器 === */
+.seek-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* === 搜索栏 === */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.drive-selector {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.drive-selector:focus {
+  border-color: var(--accent);
+}
+
+.search-input {
+  flex: 1;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  border-radius: 4px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--accent);
+}
+
+.filter-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.1s;
+}
+
+.filter-btn:hover {
+  background: var(--hover);
+}
+
+.filter-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* === 进度条 === */
+.progress-bar {
+  height: 2px;
+  background: var(--accent);
+  animation: progress 1s infinite;
+}
+
+@keyframes progress {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
+}
+
+/* === 空状态 === */
+.empty-state {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* === 设置面板 === */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.settings-window {
+  width: 400px;
+  max-width: 90vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+.win-card {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.win-badge {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.1s;
+}
+
+.win-badge:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
+.win-select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.win-select:focus {
+  border-color: var(--accent);
+}
+
+/* === 滚动条 === */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 3px solid var(--bg);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+.titlebar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-app-region: drag; /* 允许拖动窗口 */
+}
+
+.titlebar-text {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 400;
+}
+
+.titlebar-controls {
+  display: flex;
+  -webkit-app-region: no-drag; /* 按钮区域不可拖动 */
+}
+
+.titlebar-btn {
+  width: 46px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+}
+
+.titlebar-btn:hover {
+  background: var(--hover);
+}
+
+.titlebar-btn.close:hover {
+  background: #c42b1c;
+  color: white;
+}
+
+.titlebar-btn svg {
+  opacity: 0.8;
+}
+
+.titlebar-btn:hover svg {
+  opacity: 1;
+}
+
+/* 调整容器高度 */
+.container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* Header 高度调整 */
+.header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
