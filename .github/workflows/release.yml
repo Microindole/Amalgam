@@ -1,0 +1,45 @@
+name: "Publish Release"
+
+on:
+  push:
+    tags:
+      - 'v*' # 当您推送以 v 开头的标签（如 v0.1.0）时触发工作流
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write # 关键：授予脚本创建 Release 和上传附件的权限
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest" # 目前仅配置 Windows 打包
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 设置 Node.js 环境，用于前端编译
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 设置 Rust 环境，用于后端编译
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # 安装前端依赖（对应您 package.json 中的依赖）
+      - name: install frontend dependencies
+        run: npm install
+
+      # 使用官方 Tauri Action 执行构建和发布
+      - uses: tauri-apps/tauri-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 自动调用 GitHub 内置 Token
+        with:
+          tagName: ${{ github.ref_name }} # 使用您推送的标签名
+          releaseName: "Amalgam ${{ github.ref_name }}"
+          releaseBody: "自动生成的安装包，请点击下方 Assets 下载。"
+          releaseDraft: true # 先作为草稿，您可以手动确认后再正式发布
+          prerelease: false
