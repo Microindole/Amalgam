@@ -1,14 +1,14 @@
-// Settings.tsx
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import "./Settings.css";
 
+// 🌟 重新导出接口，供 App.tsx 使用
 export interface AppSettings {
   theme: "light" | "dark" | "system";
   close_to_tray: boolean;
 }
 
 export function SettingsPanel({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  // 使用定义好的接口替代 any
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
@@ -17,60 +17,52 @@ export function SettingsPanel({ visible, onClose }: { visible: boolean; onClose:
     }
   }, [visible]);
 
-  const updateSetting = async (key: keyof AppSettings, value: any) => {
+  const update = async (key: keyof AppSettings, value: any) => {
     if (!settings) return;
-    const newSettings = { ...settings, [key]: value };
-    setSettings(newSettings);
-    await invoke("save_settings", { settings: newSettings });
-    if (key === "theme") document.documentElement.setAttribute("data-theme", value);
+    
+    const next = { ...settings, [key]: value };
+    setSettings(next);
+    
+    // 调用 Rust 后端保存设置
+    await invoke("save_settings", { settings: next });
+    
+    // 如果修改的是主题，立即应用到全局属性上
+    if (key === "theme") {
+      document.documentElement.setAttribute("data-theme", value);
+    }
   };
 
   if (!visible || !settings) return null;
 
   return (
-    <div className="settings-overlay" onClick={onClose}>
-      <div className="settings-window" onClick={(e) => e.stopPropagation()}>
-        <div className="settings-header">
-          <span className="settings-title">设置</span>
-          <button className="close-title-btn" onClick={onClose}>✕</button>
+    <div className="settings-overlay mica-container" onClick={onClose} style={{
+      position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }}>
+      <div className="settings-window win-card" onClick={e => e.stopPropagation()} style={{
+        width: '400px', flexDirection: 'column', padding: '24px', gap: '16px'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+          <b style={{fontSize: '18px'}}>设置</b>
+          <button className="win-badge" onClick={onClose}>关闭</button>
         </div>
 
-        <div className="settings-content">
-          {/* 设置卡片 1：主题 */}
-          <div className="setting-card">
-            <div className="setting-icon">🎨</div>
-            <div className="setting-info">
-              <div className="setting-label">外观主题</div>
-              <div className="setting-description">选择应用的主题颜色</div>
-            </div>
-            <select 
-              className="win-select"
-              value={settings.theme} 
-              onChange={(e) => updateSetting("theme", e.target.value)}
-            >
-              <option value="system">跟随系统</option>
-              <option value="light">浅色模式</option>
-              <option value="dark">深色模式</option>
-            </select>
-          </div>
+        {/* 共享 App.css 中的 win-card 样式，保持 WinUI 一致性 */}
+        <div className="win-card" style={{width: '100%', boxSizing: 'border-box', justifyContent: 'space-between'}}>
+          <div>外观主题</div>
+          <select className="win-select" value={settings.theme} onChange={e => update("theme", e.target.value)}>
+            <option value="system">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </div>
 
-          {/* 设置卡片 2：关闭行为 */}
-          <div className="setting-card">
-            <div className="setting-icon">📥</div>
-            <div className="setting-info">
-              <div className="setting-label">退出行为</div>
-              <div className="setting-description">点击关闭按钮时最小化到系统托盘</div>
-            </div>
-            {/* 模拟 WinUI Toggle Switch */}
-            <label className="win-switch">
-              <input 
-                type="checkbox" 
-                checked={settings.close_to_tray} 
-                onChange={(e) => updateSetting("close_to_tray", e.target.checked)}
-              />
-              <span className="win-slider"></span>
-            </label>
-          </div>
+        <div className="win-card" style={{width: '100%', boxSizing: 'border-box', justifyContent: 'space-between'}}>
+          <div>关闭行为 (最小化到托盘)</div>
+          <input 
+            type="checkbox" 
+            checked={settings.close_to_tray} 
+            onChange={e => update("close_to_tray", e.target.checked)} 
+          />
         </div>
       </div>
     </div>
