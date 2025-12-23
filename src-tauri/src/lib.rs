@@ -197,7 +197,26 @@ fn check_clipboard_and_emit(app_handle: &tauri::AppHandle) {
         #[cfg(target_os = "windows")]
         unsafe {
             if let Some(file_paths) = get_clipboard_file_paths_native() {
-                let _ = app_handle.emit("clipboard-update", ("file-link", file_paths));
+                eprintln!("原始路径: {:?}", file_paths);
+                // 判断是文件还是文件夹
+                let paths: Vec<&str> = file_paths.lines().collect();
+                eprintln!("路径数量: {}", paths.len());
+                let msg_type = if paths.len() == 1 {
+                    let path_str = paths[0].trim();
+                    eprintln!("检查路径: {:?}", path_str);
+                    let path = Path::new(path_str);
+                    eprintln!("路径存在: {}", path.exists());
+                    eprintln!("是文件夹: {}", path.is_dir());
+                    if path.exists() && path.is_dir() {
+                        "folder"
+                    } else {
+                        "file-link"
+                    }
+                } else {
+                    "file-link"
+                };
+                eprintln!("消息类型: {}", msg_type);
+                let _ = app_handle.emit("clipboard-update", (msg_type, file_paths));
                 detected_new = true;
             }
         }
@@ -206,13 +225,17 @@ fn check_clipboard_and_emit(app_handle: &tauri::AppHandle) {
         if !detected_new {
             if let Ok(text) = clip.get_text() {
                 if !text.is_empty() {
-                    let path_obj = Path::new(&text);
-                    let (msg_type, content) = if path_obj.is_absolute() && path_obj.exists() {
-                        ("file-link", text.clone())
+                    let path_obj = Path::new(text.trim());
+                    let msg_type = if path_obj.is_absolute() && path_obj.exists() {
+                        if path_obj.is_dir() {
+                            "folder"
+                        } else {
+                            "file-link"
+                        }
                     } else {
-                        ("text", text.clone())
+                        "text"
                     };
-                    let _ = app_handle.emit("clipboard-update", (msg_type, content));
+                    let _ = app_handle.emit("clipboard-update", (msg_type, text.clone()));
                     detected_new = true;
                 }
             }

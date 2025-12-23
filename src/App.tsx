@@ -7,7 +7,7 @@ import "./App.css";
 
 interface ClipboardItem {
     id: string;
-    type: "text" | "image" | "file-link";
+    type: "text" | "image" | "file-link" | "folder";  // 添加 folder 类型
     content: string;
 }
 
@@ -164,7 +164,7 @@ function App() {
 
     const handleCopy = (item: ClipboardItem) => {
         invoke("write_to_clipboard", {
-            kind: item.type,
+            kind: item.type === "folder" ? "file-link" : item.type,  // folder 转为 file-link
             content: item.content
         }).catch(err => {
             console.error("复制失败:", err);
@@ -226,6 +226,26 @@ function App() {
                                     {item.type === "image" && (
                                         <img src={item.content} className="image-preview" alt="clip" />
                                     )}
+                                    {/* 处理文件夹类型 */}
+                                    {item.type === "folder" && (
+                                        <div className="file-content">
+                                            <span className="icon">📁</span>
+                                            <div className="file-info">
+                                                <div className="file-name">{displayName}</div>
+                                                <div className="file-path">{paths[0]}</div>
+                                            </div>
+                                            <button
+                                                className="action-btn"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleLocate(paths[0]);
+                                                }}
+                                            >
+                                                定位
+                                            </button>
+                                        </div>
+                                    )}
+                                    {/* 处理文件类型 */}
                                     {item.type === "file-link" && (
                                         <div className="file-content">
                                             <span
