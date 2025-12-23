@@ -1,6 +1,7 @@
 // Settings.tsx
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import "./Settings.css";
 
 export interface AppSettings {
   theme: "light" | "dark" | "system";

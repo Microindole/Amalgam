@@ -13,9 +13,9 @@ use tauri::{
     Emitter, Manager,
 };
 
-mod settings; // 引入新模块
-
-use settings::{AppSettings, SettingsState, get_settings, save_settings, init_settings};
+mod seek;
+mod settings;
+use settings::{SettingsState, get_settings, save_settings, init_settings};
 
 // --- 辅助函数：通过 PowerShell 获取剪贴板所有文件路径 (解决乱码与多选) ---
 fn get_clipboard_file_paths() -> Option<String> {
@@ -164,9 +164,9 @@ fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn open_in_explorer(path: String) -> Result<(), String> {
-    // 如果是多个文件，打开第一个文件所在的文件夹并定位
-    let first_path = path.lines().next().unwrap_or(&path);
-    Command::new("explorer").arg("/select,").arg(first_path).spawn().map_err(|e| e.to_string())?;
+    let p = Path::new(&path);
+    if !p.exists() { return Err("文件不存在".into()); }
+    Command::new("explorer").arg("/select,").arg(path).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -200,7 +200,9 @@ pub fn run() {
             write_to_clipboard, 
             open_in_explorer,
             get_settings,
-            save_settings
+            save_settings,
+            seek::search_files,
+            seek::get_available_drives
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
