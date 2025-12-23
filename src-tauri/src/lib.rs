@@ -4,47 +4,102 @@ use image::ImageFormat;
 use std::borrow::Cow;
 use std::io::Cursor;
 use std::path::Path;
-use std::process::Command; 
 use std::thread;
-use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
 
+// Windows 特有引用
+#[cfg(target_os = "windows")]
+use windows::{
+    core::w,
+    Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    Win32::System::DataExchange::{
+        AddClipboardFormatListener, CloseClipboard, GetClipboardData, OpenClipboard,
+        RemoveClipboardFormatListener, SetClipboardData, EmptyClipboard,
+    },
+    Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT},
+    Win32::System::LibraryLoader::GetModuleHandleW,
+    Win32::UI::Shell::{DragQueryFileW, HDROP, DROPFILES},
+    Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
+        HWND_MESSAGE, MSG, WNDCLASSW, WINDOW_EX_STYLE, WINDOW_STYLE,
+        WM_CLIPBOARDUPDATE, GWLP_USERDATA, SetWindowLongPtrW, GetWindowLongPtrW,
+    },
+};
+
 mod seek;
 mod settings;
 use settings::{SettingsState, get_settings, save_settings, init_settings};
 
-// --- 辅助函数：通过 PowerShell 获取剪贴板所有文件路径 (解决乱码与多选) ---
-fn get_clipboard_file_paths() -> Option<String> {
-    #[cfg(target_os = "windows")]
-    {
-        // 核心修复：强制 PowerShell 以 UTF8 编码输出
-        let ps_script = "
-            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
-            $files = Get-Clipboard -Format FileDropList;
-            if ($files) { $files.FullName }
-        ";
-        
-        let output = Command::new("powershell")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg(ps_script)
-            .output()
-            .ok()?;
-        
-        if output.status.success() {
-            // 使用 UTF-8 转换并过滤空行
-            let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !result.is_empty() {
-                // 返回所有文件路径，以换行符分隔
-                return Some(result);
-            }
+// --- 原生 Win32 获取剪贴板文件路径 (CF_HDROP) ---
+#[cfg(target_os = "windows")]
+unsafe fn get_clipboard_file_paths_native() -> Option<String> {
+    if !OpenClipboard(None).is_ok() { return None; }
+
+    // CF_HDROP = 15
+    let h_data = GetClipboardData(15).ok();
+    let result = if let Some(handle) = h_data {
+        let h_drop = HDROP(handle.0 as *mut _);
+        let count = DragQueryFileW(h_drop, 0xFFFFFFFF, None);
+        let mut paths = Vec::new();
+
+        for i in 0..count {
+            let len = DragQueryFileW(h_drop, i, None);
+            let mut buffer = vec![0u16; len as usize + 1];
+            DragQueryFileW(h_drop, i, Some(&mut buffer));
+            paths.push(String::from_utf16_lossy(&buffer[..len as usize]));
         }
+        Some(paths.join("\n"))
+    } else {
+        None
+    };
+
+    let _ = CloseClipboard();
+    result
+}
+
+// --- 原生 Win32 写入剪贴板文件路径 ---
+#[cfg(target_os = "windows")]
+unsafe fn set_clipboard_file_paths_native(content: &str) -> Result<(), String> {
+    let paths: Vec<Vec<u16>> = content.lines()
+        .map(|line| line.encode_utf16().chain(std::iter::once(0)).collect())
+        .collect();
+
+    let mut buffer = Vec::new();
+    for path in paths {
+        buffer.extend_from_slice(&path);
     }
-    None
+    buffer.push(0); // 结束标志
+
+    if !OpenClipboard(None).is_ok() { return Err("无法打开剪贴板".into()); }
+    let _ = EmptyClipboard();
+
+    let size = std::mem::size_of::<DROPFILES>() + (buffer.len() * 2);
+    let h_global = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size)
+        .map_err(|e| e.to_string())?;
+    let ptr = GlobalLock(h_global);
+
+    if ptr.is_null() {
+        let _ = CloseClipboard();
+        return Err("内存分配失败".into());
+    }
+
+    let df = ptr as *mut DROPFILES;
+    (*df).pFiles = std::mem::size_of::<DROPFILES>() as u32;
+    (*df).fWide = true.into();
+
+    let target_ptr = (ptr as *mut u8).add(std::mem::size_of::<DROPFILES>()) as *mut u16;
+    std::ptr::copy_nonoverlapping(buffer.as_ptr(), target_ptr, buffer.len());
+
+    let _ = GlobalUnlock(h_global);
+    SetClipboardData(15, Some(windows::Win32::Foundation::HANDLE(h_global.0)))
+        .map_err(|e| e.to_string())?;
+
+    let _ = CloseClipboard();
+    Ok(())
 }
 
 // --- 辅助函数：图片转换 ---
@@ -72,84 +127,116 @@ fn base64_to_image(b64: &str) -> Result<ImageData<'static>, String> {
     })
 }
 
-// --- 监听线程 ---
+// --- 监听线程：Win32 消息循环 ---
 fn start_clipboard_listener(app_handle: tauri::AppHandle) {
     thread::spawn(move || {
-        let mut last_content = String::new();
-        let mut last_img_len = 0;
+        #[cfg(target_os = "windows")]
+        unsafe {
+            let window_class = w!("AmalgamClipboardListener");
+            let instance = GetModuleHandleW(None).unwrap();
 
-        loop {
-            let mut detected_new = false;
+            let wc = WNDCLASSW {
+                hInstance: instance.into(),
+                lpszClassName: window_class,
+                lpfnWndProc: Some(clipboard_wndproc),
+                ..Default::default()
+            };
 
-            if let Ok(mut clip) = Clipboard::new() {
-                // 1. 优先探测文本
-                if let Ok(text) = clip.get_text() {
-                    if !text.is_empty() && text != last_content {
-                        let path_obj = Path::new(&text);
-                        let (msg_type, content) = if path_obj.is_absolute() && path_obj.exists() {
-                            ("file-link", text.clone())
-                        } else {
-                            ("text", text.clone())
-                        };
-                        last_content = text;
-                        let _ = app_handle.emit("clipboard-update", (msg_type, content));
-                        detected_new = true;
-                    }
-                } 
-                
-                // 2. 探测文件复制 (CF_HDROP 格式)
-                if !detected_new {
-                    if let Some(file_paths) = get_clipboard_file_paths() {
-                        if file_paths != last_content {
-                            println!("Rust: 捕获到多文件复制行为");
-                            last_content = file_paths.clone();
-                            let _ = app_handle.emit("clipboard-update", ("file-link", file_paths));
-                            detected_new = true;
-                        }
-                    }
-                }
+            let _ = RegisterClassW(&wc);
 
-                // 3. 探测图片
-                if !detected_new {
-                    if let Ok(img) = clip.get_image() {
-                        if img.bytes.len() != last_img_len {
-                            last_img_len = img.bytes.len();
-                            if let Some(b64_str) = image_to_base64(img) {
-                                let _ = app_handle.emit("clipboard-update", ("image", b64_str));
-                            }
-                        }
-                    }
-                }
+            let hwnd = match CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                window_class,
+                w!("Clipboard Window"),
+                WINDOW_STYLE::default(),
+                0, 0, 0, 0,
+                Some(HWND_MESSAGE),
+                None,
+                Some(instance.into()),
+                None,
+            ) {
+                Ok(h) => h,
+                Err(_) => return,
+            };
+
+            let _ = AddClipboardFormatListener(hwnd);
+
+            let box_handle = Box::new(app_handle);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(box_handle) as isize);
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                let _ = DispatchMessageW(&msg);
             }
-            thread::sleep(Duration::from_millis(500));
+
+            let _ = RemoveClipboardFormatListener(hwnd);
         }
     });
 }
 
-// --- 命令：写入剪贴板 (修复多选回写) ---
+#[cfg(target_os = "windows")]
+extern "system" fn clipboard_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe {
+        if msg == WM_CLIPBOARDUPDATE {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+            if ptr != 0 {
+                let app_handle = &*(ptr as *const tauri::AppHandle);
+                check_clipboard_and_emit(app_handle);
+            }
+            return LRESULT(0);
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+}
+
+fn check_clipboard_and_emit(app_handle: &tauri::AppHandle) {
+    let mut detected_new = false;
+
+    if let Ok(mut clip) = Clipboard::new() {
+        // 1. 获取文件 (Native)
+        #[cfg(target_os = "windows")]
+        unsafe {
+            if let Some(file_paths) = get_clipboard_file_paths_native() {
+                let _ = app_handle.emit("clipboard-update", ("file-link", file_paths));
+                detected_new = true;
+            }
+        }
+
+        // 2. 获取文本
+        if !detected_new {
+            if let Ok(text) = clip.get_text() {
+                if !text.is_empty() {
+                    let path_obj = Path::new(&text);
+                    let (msg_type, content) = if path_obj.is_absolute() && path_obj.exists() {
+                        ("file-link", text.clone())
+                    } else {
+                        ("text", text.clone())
+                    };
+                    let _ = app_handle.emit("clipboard-update", (msg_type, content));
+                    detected_new = true;
+                }
+            }
+        }
+
+        // 3. 获取图片
+        if !detected_new {
+            if let Ok(img) = clip.get_image() {
+                if let Some(b64_str) = image_to_base64(img) {
+                    let _ = app_handle.emit("clipboard-update", ("image", b64_str));
+                }
+            }
+        }
+    }
+}
+
+// --- 命令：写入剪贴板 ---
 #[tauri::command]
 fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
     if kind == "file-link" {
-        // 将换行符分隔的路径转为 PowerShell 数组格式
-        let paths: Vec<String> = content.lines().map(|l| format!("'{}'", l.replace("'", "''"))).collect();
-        let paths_arr = paths.join(",");
-        
-        let ps_cmd = format!(
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Path {}", 
-            paths_arr
-        );
-        
-        let output = Command::new("powershell")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg(&ps_cmd)
-            .output()
-            .map_err(|e| e.to_string())?;
-
-        if !output.status.success() {
-            return Err("回写文件失败".into());
-        }
-        return Ok(());
+        #[cfg(target_os = "windows")]
+        unsafe { return set_clipboard_file_paths_native(content); }
+        #[cfg(not(target_os = "windows"))]
+        return Err("不支持该平台的路径写入".into());
     }
 
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
@@ -166,7 +253,12 @@ fn write_to_clipboard(kind: &str, content: &str) -> Result<(), String> {
 fn open_in_explorer(path: String) -> Result<(), String> {
     let p = Path::new(&path);
     if !p.exists() { return Err("文件不存在".into()); }
-    Command::new("explorer").arg("/select,").arg(path).spawn().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg("/select,")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -183,7 +275,11 @@ pub fn run() {
                     if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = if window.is_visible().unwrap_or(false) { window.hide() } else { window.show().and_then(|_| window.set_focus()) };
+                            let _ = if window.is_visible().unwrap_or(false) { 
+                                window.hide() 
+                            } else { 
+                                window.show().and_then(|_| window.set_focus()) 
+                            };
                         }
                     }
                 })
@@ -197,7 +293,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            write_to_clipboard, 
+            write_to_clipboard,
             open_in_explorer,
             get_settings,
             save_settings,
@@ -206,15 +302,12 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // 根据设置决定是隐藏还是真正关闭
                 let state = window.state::<SettingsState>();
                 let settings = state.0.lock().unwrap();
-                
                 if settings.close_to_tray {
                     window.hide().unwrap();
                     api.prevent_close();
                 }
-                // 如果 close_to_tray 为 false，则不调用 prevent_close，应用正常退出
             }
         })
         .run(tauri::generate_context!())
