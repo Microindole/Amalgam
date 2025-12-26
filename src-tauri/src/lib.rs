@@ -12,6 +12,7 @@ mod utils;
 mod clipboard;
 
 use settings::{SettingsState, get_settings, save_settings, init_settings};
+use crate::utils::{SavedClipboardItem, save_history_to_disk, load_history_from_disk};
 
 // 命令：在资源管理器中打开
 #[tauri::command]
@@ -27,9 +28,22 @@ fn open_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// 保存历史
+#[tauri::command]
+fn save_history(app: tauri::AppHandle, history: Vec<SavedClipboardItem>) -> Result<(), String> {
+    save_history_to_disk(&app, history)
+}
+
+// 加载历史
+#[tauri::command]
+fn load_history(app: tauri::AppHandle) -> Result<Vec<SavedClipboardItem>, String> {
+    load_history_from_disk(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // 托盘设置
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -37,6 +51,12 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
+                .on_menu_event(|app, event| {
+                    // 检查点击的是否是我们定义的 "quit" ID
+                    if event.id() == "quit" {
+                        app.exit(0); // 直接退出程序 (不会触发 CloseRequested拦截，也不会再次询问)
+                    }
+                })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
                         let app = tray.app_handle();
@@ -67,7 +87,9 @@ pub fn run() {
             get_settings,
             save_settings,
             seek::search_files,
-            seek::get_available_drives
+            seek::get_available_drives,
+            save_history,
+            load_history
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

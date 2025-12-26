@@ -121,6 +121,7 @@ body {
 
 /* === 卡片 === */
 .card {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -475,4 +476,35 @@ body {
   padding: 0 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+/* 长文本折叠样式 */
+.text-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3; /* 默认只显示 3 行 */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* 可选：添加底部渐变让截断更自然 */
+  mask-image: linear-gradient(180deg, #000 60%, transparent);
+}
+
+/* 修改按钮样式 */
+.text-expand-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  z-index: 10;
+  background: #fff; /* 给个背景色遮挡文字 */
+  border: 1px solid #ddd;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  opacity: 0.9;
+}
+
+.text-expand-btn:hover {
+  opacity: 1;
+  background: #f0f0f0;
 }

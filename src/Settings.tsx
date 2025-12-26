@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { applyTheme } from "./App";
 
-// 🌟 重新导出接口，供 App.tsx 使用
 export interface AppSettings {
   theme: "light" | "dark" | "system";
   close_to_tray: boolean;
@@ -27,7 +26,6 @@ export function SettingsPanel({ visible, onClose }: { visible: boolean; onClose:
     // 保存到后端
     await invoke("save_settings", { settings: next });
 
-    // 如果修改的是主题，调用统一应用逻辑
     if (key === "theme") {
       await applyTheme(value);
     }

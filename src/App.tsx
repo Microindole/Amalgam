@@ -2,12 +2,19 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { SettingsPanel, AppSettings } from "./Settings";
+import { ask } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import "./App.css";
 
+interface SerializedItem {
+    id: string;
+    kind: string;
+    content: string;
+}
+
 interface ClipboardItem {
     id: string;
-    type: "text" | "image" | "file-link" | "folder";  // 添加 folder 类型
+    type: "text" | "image" | "file-link" | "folder";
     content: string;
 }
 
@@ -17,14 +24,10 @@ interface FileResult {
     is_dir: boolean;
 }
 
-
 const appWindow = getCurrentWindow();
 
 export const applyTheme = async (theme: "light" | "dark" | "system") => {
-    // 1. 设置 HTML 属性（保留 'system' 值，让 CSS 媒体查询生效）
     document.documentElement.setAttribute("data-theme", theme);
-
-    // 2. 同步原生标题栏主题
     try {
         if (theme === "system") {
             await appWindow.setTheme(null);
@@ -32,7 +35,6 @@ export const applyTheme = async (theme: "light" | "dark" | "system") => {
             await appWindow.setTheme(theme as "light" | "dark");
         }
     } catch (e) {
-        // 如果是在不支持 setTheme 的环境或权限不足，这里会报错，但不会影响 CSS 主题
         console.error("无法设置原生主题:", e);
     }
 };
@@ -56,20 +58,68 @@ function App() {
     const searchVersionRef = useRef<number>(0);
 
     useEffect(() => {
+
+        // --- A. 加载历史 ---
+        invoke<SerializedItem[]>("load_history").then(saved => {
+            if (saved && saved.length > 0) {
+                // 将后端返回的 'kind' 映射回前端的 'type'
+                const restored: ClipboardItem[] = saved.map(s => ({
+                    id: s.id,
+                    type: s.kind as any,
+                    content: s.content
+                }));
+                setHistory(restored);
+            }
+        });
+
+        // --- B. 拦截关闭事件 ---
+        const initCloseListener = async () => {
+            // 监听窗口关闭请求
+            const unlisten = await appWindow.onCloseRequested(async (event) => {
+                // 获取当前设置（判断是否最小化到托盘）
+                const settings = await invoke<AppSettings>("get_settings");
+
+                // 如果设置了"关闭时最小化到托盘"，则不拦截，交给 Rust 处理隐藏
+                if (settings.close_to_tray) {
+                    return;
+                }
+
+                // 否则，这是真正的退出操作，我们需要拦截
+                event.preventDefault(); // 阻止默认关闭
+
+                // 弹出询问框
+                const yes = await ask('想要保存当前的剪贴板历史以便下次使用吗？', {
+                    title: 'Amalgam - 保存历史',
+                    kind: 'info',
+                    okLabel: '保存并退出',
+                    cancelLabel: '直接退出'
+                });
+
+                if (yes) {
+                    try {
+                        await saveCurrentHistory();
+                    } catch (e) {
+                        console.error("保存历史失败:", e);
+                    }
+                }
+
+                // 无论保存与否，最后都要关闭窗口
+                await appWindow.destroy(); // 强制销毁窗口
+            });
+            return unlisten;
+        };
+
+        const unlistenPromise = initCloseListener();
+
         invoke<AppSettings>("get_settings").then(s => {
             applyTheme(s.theme as any);
         });
 
-        // 注意：不再需要 mediaQuery.addEventListener，
-        // 因为 CSS 的 @media 和原生 setTheme(null) 会由系统底层自动触发更新。
-
-        // 2. 获取磁盘列表
         invoke<string[]>("get_available_drives").then(drives => {
             setDrives(drives);
             if (drives.length > 0) setSelectedDrive(drives[0]);
         });
 
-        // 4. 监听剪贴板更新
         const unlisten = listen<[string, string]>("clipboard-update", (event) => {
             const [type, content] = event.payload;
             setHistory(prev => {
@@ -81,24 +131,17 @@ function App() {
             });
         });
         return () => {
+            unlistenPromise.then(f => f());
             unlisten.then(f => f());
         };
     }, []);
 
     const executeSearch = (query: string, drive: string, reg: boolean, mc: boolean) => {
-        // 立即更新搜索框内容
         setSearchQuery(query);
-
-        // 取消之前的搜索
-        if (timerRef.current) {
-            clearTimeout(timerRef.current);
-        }
-
-        // 增加版本号，使旧的搜索结果无效
+        if (timerRef.current) clearTimeout(timerRef.current);
         searchVersionRef.current += 1;
         const currentVersion = searchVersionRef.current;
 
-        // 如果查询为空，立即清空结果
         if (query.trim().length < 1) {
             setSearchResults([]);
             setIsSearching(false);
@@ -106,11 +149,7 @@ function App() {
         }
 
         timerRef.current = window.setTimeout(async () => {
-            // 再次检查版本，如果不匹配说明有新的搜索，放弃此次搜索
-            if (currentVersion !== searchVersionRef.current) {
-                return;
-            }
-
+            if (currentVersion !== searchVersionRef.current) return;
             setIsSearching(true);
             try {
                 const res = await invoke<FileResult[]>("search_files", {
@@ -119,20 +158,12 @@ function App() {
                     isRegex: reg,
                     matchCase: mc
                 });
-
-                // 搜索完成后再次检查版本
-                if (currentVersion === searchVersionRef.current) {
-                    setSearchResults(res);
-                }
+                if (currentVersion === searchVersionRef.current) setSearchResults(res);
             } catch (err) {
                 console.error("搜索失败:", err);
-                if (currentVersion === searchVersionRef.current) {
-                    setSearchResults([]);
-                }
+                if (currentVersion === searchVersionRef.current) setSearchResults([]);
             } finally {
-                if (currentVersion === searchVersionRef.current) {
-                    setIsSearching(false);
-                }
+                if (currentVersion === searchVersionRef.current) setIsSearching(false);
             }
         }, 300);
     };
@@ -145,7 +176,7 @@ function App() {
 
     const handleCopy = (item: ClipboardItem) => {
         invoke("write_to_clipboard", {
-            kind: item.type === "folder" ? "file-link" : item.type,  // folder 转为 file-link
+            kind: item.type === "folder" ? "file-link" : item.type,
             content: item.content
         }).catch(err => {
             console.error("复制失败:", err);
@@ -153,7 +184,7 @@ function App() {
     };
 
     const toggleExpand = (id: string, e: React.MouseEvent) => {
-        e.stopPropagation();
+        e.stopPropagation(); // 阻止冒泡，避免触发复制
         const next = new Set(expandedIds);
         if (next.has(id)) {
             next.delete(id);
@@ -161,6 +192,20 @@ function App() {
             next.add(id);
         }
         setExpandedIds(next);
+    };
+
+    const historyRef = useRef(history);
+    useEffect(() => {
+        historyRef.current = history;
+    }, [history]);
+
+    const saveCurrentHistory = async () => {
+        const itemsToSave = historyRef.current.map(item => ({
+            id: item.id,
+            kind: item.type, // 转换字段名
+            content: item.content
+        }));
+        await invoke("save_history", { history: itemsToSave });
     };
 
     return (
@@ -195,6 +240,14 @@ function App() {
                             const paths = item.content.split('\n').filter(p => p.trim());
                             const isMulti = paths.length > 1;
                             const isExpanded = expandedIds.has(item.id);
+
+                            // 核心修改：判断文本是否“过长”
+                            // 规则：超过300字符 OR 超过5行
+                            const isLongText = item.type === "text" && (
+                                item.content.length > 300 ||
+                                item.content.split('\n').length > 5
+                            );
+
                             const displayName = isMulti
                                 ? `${paths[0].split(/[\\/]/).pop()} 等 ${paths.length} 个文件`
                                 : paths[0].split(/[\\/]/).pop();
@@ -202,12 +255,25 @@ function App() {
                             return (
                                 <div key={item.id} className="card" onClick={() => handleCopy(item)}>
                                     {item.type === "text" && (
-                                        <div className="text-content">{item.content}</div>
+                                        <>
+                                            {/* 如果是长文本且未展开，添加 text-clamped 类 */}
+                                            <div className={`text-content ${isLongText && !isExpanded ? 'text-clamped' : ''}`}>
+                                                {item.content}
+                                            </div>
+                                            {/* 仅在需要折叠时显示按钮 */}
+                                            {isLongText && (
+                                                <button
+                                                    className="text-expand-btn"
+                                                    onClick={(e) => toggleExpand(item.id, e)}
+                                                >
+                                                    {isExpanded ? "收起" : "展开"}
+                                                </button>
+                                            )}
+                                        </>
                                     )}
                                     {item.type === "image" && (
                                         <img src={item.content} className="image-preview" alt="clip" />
                                     )}
-                                    {/* 处理文件夹类型 */}
                                     {item.type === "folder" && (
                                         <div className="file-content">
                                             <span className="icon">📁</span>
@@ -226,7 +292,6 @@ function App() {
                                             </button>
                                         </div>
                                     )}
-                                    {/* 处理文件类型 */}
                                     {item.type === "file-link" && (
                                         <div className="file-content">
                                             <span
@@ -281,7 +346,6 @@ function App() {
                                 onChange={e => {
                                     const newDrive = e.target.value;
                                     setSelectedDrive(newDrive);
-                                    // 重要：传递新的盘符路径
                                     executeSearch(searchQuery, newDrive, isRegex, matchCase);
                                 }}
                             >

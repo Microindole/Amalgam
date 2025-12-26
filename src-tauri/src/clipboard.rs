@@ -157,7 +157,8 @@ fn check_clipboard_and_emit(app_handle: &tauri::AppHandle) {
     let mut detected_new = false;
 
     if let Ok(mut clip) = Clipboard::new() {
-        // 1. 获取文件 (Native)
+        // 1. 获取文件 (Native CF_HDROP)
+        // 只有这里检测到的才会被视为 folder/file-link
         #[cfg(target_os = "windows")]
         unsafe {
             if let Some(file_paths) = get_clipboard_file_paths_native() {
@@ -180,20 +181,11 @@ fn check_clipboard_and_emit(app_handle: &tauri::AppHandle) {
         }
 
         // 2. 获取文本
+        // 修改点：直接作为 "text" 处理，不再尝试解析为路径
         if !detected_new {
             if let Ok(text) = clip.get_text() {
                 if !text.is_empty() {
-                    let path_obj = Path::new(text.trim());
-                    let msg_type = if path_obj.is_absolute() && path_obj.exists() {
-                        if path_obj.is_dir() {
-                            "folder"
-                        } else {
-                            "file-link"
-                        }
-                    } else {
-                        "text"
-                    };
-                    let _ = app_handle.emit("clipboard-update", (msg_type, text.clone()));
+                    let _ = app_handle.emit("clipboard-update", ("text", text.clone()));
                     detected_new = true;
                 }
             }
