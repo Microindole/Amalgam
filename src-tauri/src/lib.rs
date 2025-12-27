@@ -3,6 +3,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Manager,
+    Emitter
 };
 
 // 引入模块
@@ -40,6 +41,12 @@ fn load_history(app: tauri::AppHandle) -> Result<Vec<SavedClipboardItem>, String
     load_history_from_disk(&app)
 }
 
+// 新增：前端调用此命令来真正退出
+#[tauri::command]
+async fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -52,9 +59,8 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| {
-                    // 检查点击的是否是我们定义的 "quit" ID
                     if event.id() == "quit" {
-                        app.exit(0); // 直接退出程序 (不会触发 CloseRequested拦截，也不会再次询问)
+                        app.exit(0);
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -82,22 +88,31 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            clipboard::write_to_clipboard, // 引用 clipboard 模块的命令
+            clipboard::write_to_clipboard,
             open_in_explorer,
             get_settings,
             save_settings,
             seek::search_files,
             seek::get_available_drives,
             save_history,
-            load_history
+            load_history,
+            quit_app  // 新增命令
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<SettingsState>();
                 let settings = state.0.lock().unwrap();
+
+                // 如果设置了最小化到托盘，则隐藏窗口
                 if settings.close_to_tray {
                     window.hide().unwrap();
                     api.prevent_close();
+                } else {
+                    // 如果没有设置最小化到托盘，则通知前端处理（询问保存）
+                    // 这里阻止默认关闭，让前端弹出对话框
+                    api.prevent_close();
+                    // 发送事件给前端
+                    let _ = window.emit("request-close-confirmation", ());
                 }
             }
         })

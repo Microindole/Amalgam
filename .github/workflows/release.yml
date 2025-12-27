@@ -3,43 +3,54 @@ name: "Publish Release"
 on:
   push:
     tags:
-      - 'v*' # 当您推送以 v 开头的标签（如 v0.1.0）时触发工作流
+      - 'v*'
 
 jobs:
   publish-tauri:
     permissions:
-      contents: write # 关键：授予脚本创建 Release 和上传附件的权限
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: "windows-latest" # 目前仅配置 Windows 打包
+          - platform: "windows-latest"
 
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
-      # 设置 Node.js 环境，用于前端编译
       - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # 设置 Rust 环境，用于后端编译
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      # 安装前端依赖（对应您 package.json 中的依赖）
       - name: install frontend dependencies
         run: npm install
 
-      # 使用官方 Tauri Action 执行构建和发布
-      - uses: tauri-apps/tauri-action@v2
+      - name: Generate Tauri icons
+        run: npm run tauri icon ./logo.svg
+
+      - name: Sync Version from Tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Syncing version to: $VERSION"
+          
+          npm version $VERSION --no-git-tag-version
+          
+          node -e "const fs = require('fs'); const p = 'src-tauri/tauri.conf.json'; const d = JSON.parse(fs.readFileSync(p)); d.version = '$VERSION'; fs.writeFileSync(p, JSON.stringify(d, null, 2));"
+          
+          sed -i "0,/^version = .*/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+      - uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 自动调用 GitHub 内置 Token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }} # 使用您推送的标签名
+          tagName: ${{ github.ref_name }}
           releaseName: "Amalgam ${{ github.ref_name }}"
           releaseBody: "自动生成的安装包，请点击下方 Assets 下载。"
-          releaseDraft: true # 先作为草稿，您可以手动确认后再正式发布
+          releaseDraft: true
           prerelease: false
