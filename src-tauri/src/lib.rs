@@ -7,7 +7,6 @@ use tauri::{
 };
 
 // 引入模块
-mod seek;
 mod settings;
 mod utils;
 mod clipboard;
@@ -92,8 +91,6 @@ pub fn run() {
             open_in_explorer,
             get_settings,
             save_settings,
-            seek::search_files,
-            seek::get_available_drives,
             save_history,
             load_history,
             quit_app  // 新增命令
