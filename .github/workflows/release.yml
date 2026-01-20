@@ -30,6 +30,15 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
+      - name: Extract Release Notes
+        id: extract_notes
+        shell: bash
+        run: |
+          NOTES=$(node scripts/extract-changelog.js ${{ github.ref_name }})
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Generate Tauri icons
         run: npm run tauri icon ./logo.svg
 
@@ -51,6 +60,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Amalgam ${{ github.ref_name }}"
-          releaseBody: "自动生成的安装包，请点击下方 Assets 下载。"
+          releaseBody: ${{ steps.extract_notes.outputs.notes }}
           releaseDraft: true
           prerelease: false
