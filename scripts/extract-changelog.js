@@ -2,7 +2,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-// 获取传入的版本号参数 (例如 "v0.1.2")
 const targetVersion = process.argv[2];
 
 if (!targetVersion) {
@@ -10,35 +9,60 @@ if (!targetVersion) {
   process.exit(1);
 }
 
-// 你的 CHANGELOG 文件路径
 const changelogPath = join(process.cwd(), 'docs', 'CHANGELOG.md');
 
 try {
-  const content = readFileSync(changelogPath, 'utf-8');
+  // 1. 读取文件并立即统一换行符为 \n
+  // 这样无论是在 Windows (CRLF) 还是 Linux (LF) 下，后续逻辑都一致
+  const rawContent = readFileSync(changelogPath, 'utf-8');
+  const content = rawContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   
-  // 生成正则：匹配 "## [v0.1.2]" 或 "## v0.1.2" 开始的内容
-  // 直到遇到下一个 "## " 标题或文件结束
-  // 解释：
-  // ^##\s+\[? ... \]?.*$  -> 匹配标题行 (支持有无方括号)
-  // \n([\s\S]*?)          -> 捕获中间的所有内容（非贪婪）
-  // (?=^##\s|$)           -> 向前查找，直到遇到下一级标题或结尾
   const versionEscaped = escapeRegExp(targetVersion);
-  const regex = new RegExp(`^##\\s+\\[?${versionEscaped}\\]?.*$\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'm');
   
-  const match = content.match(regex);
+  // 2. 使用更宽松的正则查找标题行
+  // 解释：
+  // ^##\s+        -> 行首有两个#号和空格
+  // \[? ... \]?   -> 版本号可能有 [] 包裹，也可能没有
+  // .* -> 忽略这一行后面的日期或其他文字
+  const headerRegex = new RegExp(`^##\\s+\\[?${versionEscaped}\\]?.*`, 'm');
+  
+  const match = content.match(headerRegex);
 
-  if (match && match[1]) {
-    // 成功找到：输出提取的内容（去除首尾空行）
-    console.log(match[1].trim());
+  if (match) {
+    // 找到标题所在的起始位置
+    const startIndex = match.index + match[0].length;
+    
+    // 截取从标题结束到文件末尾的内容
+    const remainder = content.slice(startIndex);
+    
+    // 3. 找下一个标题的位置（以此作为结束点）
+    // 查找下一个以 "## " 开头的行
+    const nextHeaderRegex = /^##\s/m;
+    const nextMatch = remainder.match(nextHeaderRegex);
+    
+    let body = "";
+    if (nextMatch) {
+      // 如果后面还有版本，就截取到下一个版本之前
+      body = remainder.slice(0, nextMatch.index);
+    } else {
+      // 如果后面没有版本了（这是最老的版本），就取到底
+      body = remainder;
+    }
+
+    // 4. 清理首尾空白并输出
+    console.log(body.trim());
+    
   } else {
-    // 没找到：输出默认文案
-    console.error(`⚠️ 警告: 在 CHANGELOG.md 中未找到 ${targetVersion} 的记录，使用默认描述。`);
+    // 没找到时的回退策略
+    console.error(`⚠️ 警告: 在 CHANGELOG.md 中未找到 ${targetVersion} 的记录。`);
+    // 为了方便调试，打印一下文件的前200个字符，看看是不是读错文件了
+    console.error(`--- 文件预览 (前200字符) ---\n${content.slice(0, 200)}\n---------------------------`);
+    
     console.log(`**${targetVersion}**\n\n自动发布的版本。详细更新日志请查看 [CHANGELOG.md](../docs/CHANGELOG.md)。`);
   }
 
 } catch (e) {
   console.error("❌ 读取 CHANGELOG.md 失败:", e.message);
-  // 即使读取失败，也输出一个保底文案，防止 CI 挂掉
   console.log(`Release ${targetVersion}`);
 }
 
